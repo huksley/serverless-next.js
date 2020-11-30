@@ -18,7 +18,9 @@ import {
   PreRenderedManifest as PrerenderManifestType,
   OriginResponseEvent,
   PerfLogger,
-  RoutesManifest
+  RoutesManifest,
+  ImageConfig,
+  ImagesManifest
 } from "../types";
 import { performance } from "perf_hooks";
 import { ServerResponse } from "http";
@@ -33,6 +35,9 @@ import { addHeadersToResponse } from "./headers/addHeaders";
 import { isValidPreviewRequest } from "./lib/isValidPreviewRequest";
 import type { SdkError } from "@aws-sdk/smithy-client";
 import { getUnauthenticatedResponse } from "./auth/authenticator";
+import { imageOptimizer } from "./images/imageOptimizer";
+import { UrlWithParsedQuery } from "url";
+import * as url from "url";
 
 const basePath = RoutesManifestJson.basePath;
 
@@ -60,6 +65,9 @@ const addS3HostHeader = (
 };
 
 const isDataRequest = (uri: string): boolean => uri.startsWith("/_next/data");
+
+const isImageOptimizerRequest = (uri: string): boolean =>
+  uri.startsWith("/_next/image");
 
 const normaliseUri = (uri: string): string => {
   if (basePath) {
@@ -326,6 +334,33 @@ const handleOriginRequest = async ({
 
       uri = normaliseUri(request.uri);
     }
+  }
+
+  // Handle image requests
+  const isImageRequest = isImageOptimizerRequest(uri);
+  if (isImageRequest) {
+    const imagesManifest: ImagesManifest | undefined = await import(
+      // @ts-ignore
+      "./images-manifest.json"
+    );
+
+    let imagesConfig: ImageConfig | undefined;
+    if (imagesManifest) {
+      imagesConfig = imagesManifest.images;
+    }
+    const { req, res, responsePromise } = lambdaAtEdgeCompat(
+      event.Records[0].cf,
+      {
+        enableHTTPCompression: manifest.enableHTTPCompression
+      }
+    );
+
+    const urlWithParsedQuery: UrlWithParsedQuery = url.parse(
+      `${request.uri}?${request.querystring}`,
+      true
+    );
+    await imageOptimizer(imagesConfig, req, res, urlWithParsedQuery);
+    return await responsePromise;
   }
 
   const isStaticPage = pages.html.nonDynamic[uri]; // plain page without any props

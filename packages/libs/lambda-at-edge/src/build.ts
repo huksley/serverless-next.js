@@ -240,6 +240,39 @@ class Builder {
     await fse.copy(source, destination);
   }
 
+  async copyImageOptimizerFiles() {
+    const imageCacheExists = await fse.pathExists(
+      join(this.dotNextDir, "cache", "images")
+    );
+
+    if (!imageCacheExists) {
+      console.info("Not using image optimizer, skipping copying dependencies.");
+      return;
+    }
+
+    await Promise.all([
+      fse.copy(
+        join(this.dotNextDir, "cache", "images"),
+        join(this.outputDir, DEFAULT_LAMBDA_CODE_DIR, "cache", "images")
+      ),
+      // TODO: copy Lambda-built modules to dist: https://sharp.pixelplumbing.com/install#aws-lambda
+      fse.copy(
+        join(
+          path.dirname(
+            require.resolve("@sls-next/lambda-at-edge/package.json")
+          ),
+          "dist",
+          "sharp_node_modules"
+        ),
+        join(this.outputDir, DEFAULT_LAMBDA_CODE_DIR, "node_modules")
+      ),
+      fse.copy(
+        join(this.dotNextDir, "images-manifest.json"),
+        join(this.outputDir, DEFAULT_LAMBDA_CODE_DIR, "images-manifest.json")
+      )
+    ]);
+  }
+
   async buildDefaultLambda(
     buildManifest: OriginRequestDefaultHandlerManifest
   ): Promise<void[]> {
@@ -343,7 +376,9 @@ class Builder {
       this.processAndCopyRoutesManifest(
         join(this.dotNextDir, "routes-manifest.json"),
         join(this.outputDir, DEFAULT_LAMBDA_CODE_DIR, "routes-manifest.json")
-      )
+      ),
+      // Copy needed sharp files for image optimizer
+      this.copyImageOptimizerFiles()
     ]);
   }
 
@@ -442,6 +477,7 @@ class Builder {
       trailingSlash: false,
       domainRedirects: domainRedirects,
       authentication: authentication,
+      images: undefined,
       enableHTTPCompression
     };
 
@@ -554,6 +590,9 @@ class Builder {
       // Support trailing slash: https://nextjs.org/docs/api-reference/next.config.js/trailing-slash
       defaultBuildManifest.trailingSlash =
         normalisedNextConfig?.trailingSlash ?? false;
+
+      // Support image optimization configurations: https://nextjs.org/docs/basic-features/image-optimization#configuration
+      defaultBuildManifest.images = normalisedNextConfig?.images;
     }
 
     return {
